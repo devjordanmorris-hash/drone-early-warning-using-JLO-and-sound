@@ -128,5 +128,27 @@ void triangulate_tdoa(const double tdoa[3], const MicPos mics[4],
     }
 }
 
+###  Filtering for Drone Sounds (Ignore Everything Else)
+
+The system must only process sounds that match known drone signatures. This is a two‑step filter:
+
+1. **Build a Library of Drone JLO Fingerprints**
+   - Collect WAV files of relevant drones (DJI Phantom, Mavic, FPV, etc.).
+   - Convert each WAV to JLO using `wav-to-jlo` app.
+   - Extract the **chirp fingerprint** (64‑bit value) from each JLO file.
+   - Store the fingerprints in `/drone_library/` (as hex strings or binary files).
+
+2. **Live Filtering Pipeline**
+   - For each new sound from the 4‑mic array:
+     - Record & compress to JLO.
+     - Extract its `chirp fingerprint`.
+     - Compare against the library using GPU‑accelerated matching.
+     - **Match found (similarity > 0.85)** → flag as drone, proceed to triangulation.
+     - **No match** → discard sound, do nothing.
+
+**Existing Code for Fingerprinting:**
+- GPU matching kernel: [`motif_match.metal`](https://github.com/devjordanmorris-hash/THE-LOT/blob/main/motif_match.metal)
+- CPU fingerprint functions: [`bitwise_math.c` (search for `chirp_fingerprint`)](https://github.com/devjordanmorris-hash/THE-LOT/blob/main/bitwise_math.c)
+- `wav-to-jlo` app: [github.com/devjordanmorris-hash/wav-to-jlo](https://github.com/devjordanmorris-hash/wav-to-jlo)
 
 
