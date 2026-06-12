@@ -1,0 +1,132 @@
+//  Microphone Geometry:   M3 (0, H)         M4 (W, H)
+    
+//                         M1 (0, 0)         M2 (W, 0) 
+
+// W = width between M1 and M2 (e.g., 0.5 m)
+// H = height between M1 and M3 (e.g., 0.5 m)
+// Sound speed c = 343.0 m/s
+
+
+
+
+// jlo_triangulation.h
+typedef struct {
+    double slope;      // rate of change (per sample)
+    double duration;   // number of samples
+    double amplitude;  // start value (or peak)
+} JLO_Triangle;
+
+// Decode JLO file and return array of triangles (one per channel)
+int jlo_decode_triangles(const char* jlo_file, JLO_Triangle* triangles, int max_triangles);
+
+
+// For a rising edge: y(t) = y0 + slope * t. Zero crossing occurs when y0 + slope * t = 0 ⇒ t_zero = -y0 / slope.
+
+// Since y0 and slope are known from the JLO triangle, we can compute t_zero as a high‑precision double (or fixed‑point integer).
+
+double triangle_zero_crossing(const JLO_Triangle* tri) {
+    if (tri->slope == 0.0) return -1.0; // no crossing
+    return -tri->amplitude / tri->slope;
+}
+
+// TDOA Matching Between Two Channels
+
+typedef struct {
+    double t;        // zero crossing time
+    int triangle_idx; // index in JLO stream
+} ZeroCrossing;
+
+int match_zero_crossings(ZeroCrossing* a, int na,
+                         ZeroCrossing* b, int nb,
+                         double* tdoa, int max_matches) {
+    // Simple nearest‑neighbour matching (Greedy)
+    int matches = 0;
+    for (int i = 0; i < na && matches < max_matches; i++) {
+        for (int j = 0; j < nb; j++) {
+            double dt = fabs(a[i].t - b[j].t);
+            if (dt < 0.0001) { // 0.1 ms threshold
+                tdoa[matches++] = a[i].t - b[j].t;
+                break;
+            }
+        }
+    }
+    return matches;
+}
+
+// Hyperbolic Intersection (Triangulation) 
+
+typedef struct {
+    double x, y, z;  // microphone position (m)
+} MicPos;
+
+typedef struct {
+    double x, y, z;  // source position (m)
+} SourcePos;
+
+// Compute distance difference from source to two mics
+double distance_diff(const SourcePos* src, const MicPos* m1, const MicPos* m2) {
+    double d1 = sqrt((src->x - m1->x)*(src->x - m1->x) +
+                     (src->y - m1->y)*(src->y - m1->y) +
+                     (src->z - m1->z)*(src->z - m1->z));
+    double d2 = sqrt((src->x - m2->x)*(src->x - m2->x) +
+                     (src->y - m2->y)*(src->y - m2->y) +
+                     (src->z - m2->z)*(src->z - m2->z));
+    return d1 - d2;
+}
+
+// Jacobian for Newton iteration (can be approximated numerically)
+void triangulate_tdoa(const double tdoa[3], const MicPos mics[4],
+                      SourcePos* src, int max_iter) {
+    // Initial guess (e.g., centre of mics)
+    src->x = (mics[0].x + mics[1].x + mics[2].x + mics[3].x) / 4.0;
+    src->y = (mics[0].y + mics[1].y + mics[2].y + mics[3].y) / 4.0;
+    src->z = (mics[0].z + mics[1].z + mics[2].z + mics[3].z) / 4.0;
+
+    double c = 343.0; // speed of sound
+
+    for (int iter = 0; iter < max_iter; iter++) {
+        // Compute residuals: measured Δd - predicted Δd
+        double r1 = c * tdoa[0] - distance_diff(src, &mics[0], &mics[1]);
+        double r2 = c * tdoa[1] - distance_diff(src, &mics[0], &mics[2]);
+        double r3 = c * tdoa[2] - distance_diff(src, &mics[0], &mics[3]);
+
+        if (fabs(r1) + fabs(r2) + fabs(r3) < 1e-6) break;
+
+        // Compute Jacobian numerically (finite differences)
+        double eps = 0.01; // 1 cm
+        SourcePos src_plus;
+        double J[3][3];
+
+        for (int d = 0; d < 3; d++) {
+            src_plus = *src;
+            ((double*)&src_plus)[d] += eps;
+            double d1 = c * tdoa[0] - distance_diff(&src_plus, &mics[0], &mics[1]);
+            double d2 = c * tdoa[1] - distance_diff(&src_plus, &mics[0], &mics[2]);
+            double d3 = c * tdoa[2] - distance_diff(&src_plus, &mics[0], &mics[3]);
+            J[0][d] = (d1 - r1) / eps;
+            J[1][d] = (d2 - r2) / eps;
+            J[2][d] = (d3 - r3) / eps;
+        }
+
+        // Solve J * Δ = r (using your bitwise math or a small linear solver)
+        double det = J[0][0]*(J[1][1]*J[2][2] - J[1][2]*J[2][1]) -
+                     J[0][1]*(J[1][0]*J[2][2] - J[1][2]*J[2][0]) +
+                     J[0][2]*(J[1][0]*J[2][1] - J[1][1]*J[2][0]);
+
+        if (fabs(det) < 1e-9) break; // singular
+
+        double invJ[3][3];
+        // ... compute inverse (3x3, simple arithmetic)
+
+        double dx = invJ[0][0]*r1 + invJ[0][1]*r2 + invJ[0][2]*r3;
+        double dy = invJ[1][0]*r1 + invJ[1][1]*r2 + invJ[1][2]*r3;
+        double dz = invJ[2][0]*r1 + invJ[2][1]*r2 + invJ[2][2]*r3;
+
+        src->x += dx;
+        src->y += dy;
+        src->z += dz;
+    }
+}
+
+
+
