@@ -1,0 +1,18 @@
+drone-early-warning-using-JLO-and-sound/
+├── LICENSE
+├── README.md
+├── src/
+│   ├── triangulation.c
+│   ├── triangulation.h
+│   ├── jlo_decode.c
+│   ├── jlo_decode.h
+│   ├── tdoa_match.c
+│   ├── tdoa_match.h
+│   └── main.c
+├── test/
+│   ├── test_triangulation.c
+│   └── sample_wavs/
+├── metal/
+│   └── (optional GPU kernels for chirp matching)
+└── docs/
+    └── (later: user guide, algorithm description)
